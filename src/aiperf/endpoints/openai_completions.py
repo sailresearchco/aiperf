@@ -103,13 +103,15 @@ class CompletionsEndpoint(BaseEndpoint):
         data = self.extract_completions_response_data(json_obj)
         usage = json_obj.get("usage") or None
         spec_decode_stats = self.extract_spec_decode_stats(json_obj)
+        metadata = self.extract_response_metadata(json_obj)
 
-        if data or usage or spec_decode_stats:
+        if data or usage or spec_decode_stats or metadata:
             return ParsedResponse(
                 perf_ns=response.perf_ns,
                 data=data,
                 usage=usage,
                 spec_decode_stats=spec_decode_stats,
+                metadata=metadata,
             )
 
         return None

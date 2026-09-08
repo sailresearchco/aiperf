@@ -114,6 +114,10 @@ class EndpointInfo(AIPerfBaseModel):
         "You can repeat this flag for multiple inputs. Inputs should be in an 'input_name:value' format. "
         "Alternatively, a string representing a json formatted dict can be provided.",
     )
+    response_metadata: dict[str, str] = Field(
+        default_factory=dict,
+        description="Named JMESPath expressions for selected response metadata.",
+    )
     use_legacy_max_tokens: bool = Field(
         default=EndpointDefaults.USE_LEGACY_MAX_TOKENS,
         description="Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request payloads.",
@@ -213,6 +217,7 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 base_urls=list(ep.urls),
                 headers=list((getattr(ep, "headers", {}) or {}).items()),
                 extra=list((getattr(ep, "extra", {}) or {}).items()),
+                response_metadata=ep.response_metadata,
                 timeout=ep.timeout,
                 api_key=ep.api_key,
                 use_legacy_max_tokens=ep.use_legacy_max_tokens,

@@ -399,6 +399,31 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `template` | `TemplateEndpoint` | Template for custom endpoints |
 | `video_generation` | `VideoGenerationEndpoint` | Text-to-video generation API |
 
+### Selected response metadata
+
+The `chat` and `completions` endpoints can preserve selected response fields for
+record observers without retaining raw responses:
+
+```yaml
+benchmark:
+  endpoint:
+    responseMetadata:
+      server_queue_duration_ms: jib_metrics.server_queue_duration_ms
+```
+
+Each name maps to a [JMESPath expression](https://jmespath.org/specification.html).
+For example, `{"jib_metrics": {"server_queue_duration_ms": 12.5}}` produces
+`parsed_response.metadata["server_queue_duration_ms"] == 12.5`.
+
+- The default is an empty mapping; no fields are extracted.
+- Each parsed JSON response has every configured key. Missing or JSON `null`
+  values become Python `None`; zero stays zero. Values are not merged across chunks.
+- Invalid expressions fail config validation. These settings are not sent to the server.
+- Streaming and buffered responses are supported. Metadata-only chunks have no
+  content, so they do not affect token counts or content timing metrics.
+- Observers read the values from `ctx.record.responses`. Normal metric exports
+  do not automatically include them; an observer chooses what to save.
+
 ### Timing Strategies
 
 | Name | Class | Description |
