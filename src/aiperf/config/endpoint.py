@@ -13,11 +13,13 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlparse
 
+import jmespath
 from pydantic import (
     AfterValidator,
     ConfigDict,
     Field,
     field_serializer,
+    field_validator,
     model_validator,
 )
 
@@ -305,6 +307,26 @@ class EndpointConfig(BaseConfig):
             "Common fields: temperature, top_p, top_k, stop.",
         ),
     ]
+
+    response_metadata: Annotated[
+        dict[str, str],
+        Field(
+            default_factory=dict,
+            description="Named JMESPath expressions to extract from each chat or "
+            "completions response into ParsedResponse.metadata. Missing or null "
+            "values are None. Empty disables extraction.",
+        ),
+    ]
+
+    @field_validator("response_metadata")
+    @classmethod
+    def _validate_response_metadata(cls, value: dict[str, str]) -> dict[str, str]:
+        for name, expression in value.items():
+            try:
+                jmespath.compile(expression)
+            except jmespath.exceptions.JMESPathError as exc:
+                raise ValueError(f"response_metadata.{name}: {exc}") from exc
+        return value
 
     download_video_content: Annotated[
         bool,

@@ -7,6 +7,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+import jmespath
+
 from aiperf.common.enums import MediaType
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
@@ -39,6 +41,17 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs):
         super().__init__(**kwargs)
         self.model_endpoint = model_endpoint
+        self._response_metadata_queries = {
+            name: jmespath.compile(expression)
+            for name, expression in model_endpoint.endpoint.response_metadata.items()
+        }
+
+    def extract_response_metadata(self, json_obj: dict[str, Any]) -> dict[str, Any]:
+        """Select named values using JMESPath (https://jmespath.org/specification.html)."""
+        return {
+            name: query.search(json_obj)
+            for name, query in self._response_metadata_queries.items()
+        }
 
     def get_endpoint_headers(self, request_info: RequestInfo) -> dict[str, str]:
         """Get endpoint headers (auth + user custom). Override to customize."""
