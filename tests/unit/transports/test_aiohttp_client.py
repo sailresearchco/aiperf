@@ -187,6 +187,7 @@ class TestAioHttpClient:
             (400, "Bad Request", "Invalid request format"),
             (401, "Unauthorized", "Authentication failed"),
             (404, "Not Found", "Resource not found"),
+            (429, "Too Many Requests", "Worker at capacity"),
             (500, "Internal Server Error", "Server error occurred"),
             (503, "Service Unavailable", "Service temporarily unavailable"),
         ],
@@ -211,6 +212,8 @@ class TestAioHttpClient:
                 expected_error_type=reason,
                 expected_error_message=error_text,
             )
+            assert record.end_perf_ns is not None
+            assert record.end_perf_ns >= record.start_perf_ns
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

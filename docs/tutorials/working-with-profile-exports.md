@@ -119,7 +119,7 @@ The JSONL output contains one record per line, for each request sent during the 
 - `turn_index`: Position within a multi-turn conversation (0-indexed), or 0 for single-turn conversations.
 - `request_start_ns`: Epoch time in nanoseconds when request was initiated by AIPerf.
 - `request_ack_ns`: Epoch time in nanoseconds when server acknowledged the request. This is only applicable to streaming requests.
-- `request_end_ns`: Epoch time in nanoseconds when the last response was received from the endpoint.
+- `request_end_ns`: Epoch time in nanoseconds when the last response was received from the endpoint. For a non-2xx HTTP response (including 429), this is recorded after its error body has been read, so rejected requests retain their response duration.
 - `worker_id`: ID of the AIPerf worker that executed the request against the endpoint.
 - `record_processor_id`: ID of the AIPerf record processor that processed the results from the server.
 - `benchmark_phase`: Phase of the benchmark. Currently only `profiling` is supported.
