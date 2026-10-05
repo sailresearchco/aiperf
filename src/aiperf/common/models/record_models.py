@@ -1463,6 +1463,18 @@ class ParsedResponse:
     uninterpreted here; a ``SpecDecodeAdapterProtocol`` converts it into the
     engine-neutral ``SpecDecodeAcceptanceRecord`` at record-assembly time."""
 
+    choice_update: bool = False
+    """True when this streamed response carried an update for the first choice:
+    a ``delta`` (chat) or ``text`` (completions) entry, or a ``finish_reason``,
+    even if the update produced no visible text. Such chunks still mark a
+    generation step on the server (a token that detokenized to ``""``, text held
+    back by an incremental detokenizer, or the terminal ``finish_reason`` chunk
+    of a stream whose tail produced no text, e.g. tokens past EOS under
+    ``ignore_eos``), so ``ParsedResponseRecord.generation_end_perf_ns`` uses them
+    to end the decode window. Usage-only chunks (empty ``choices``) and
+    ``[DONE]`` never set it. ``data`` stays ``None`` when the text is empty, so
+    content-based timing (TTFT, request latency, ICL) is unaffected."""
+
     def __post_init__(self) -> None:
         # Coerce raw dicts to Usage, since dataclass __init__ doesn't run
         # Pydantic validation like BaseModel did.
@@ -1492,6 +1504,14 @@ class TokenCounts:
     into the first streamed chunk (e.g. TRT-LLM ``stream-interval``). ``None`` unless
     ``--per-chunk-usage`` is set and the server reports per-chunk usage; inter-token
     latency then falls back to assuming one token in the first chunk."""
+
+    from_server_usage: bool = False
+    """True when ``output``/``reasoning`` came from server-reported usage
+    (``--use-server-token-count``). Server usage counts every generated token,
+    including tokens whose streamed delta carried no text, so inter-token latency
+    pairs it with the decode window that ends at the last generation update
+    (``ParsedResponseRecord.generation_end_perf_ns``). Client-side counts only
+    see streamed text, so they keep the last-content-response window."""
 
 
 @dataclass(slots=True)
@@ -1587,6 +1607,21 @@ class ParsedResponseRecord:
         Useful for timing metrics that should measure content delivery.
         """
         return [response for response in self.responses if response.data]
+
+    @cached_property
+    def generation_end_perf_ns(self) -> int | None:
+        """Arrival time of the last streamed response that advanced generation.
+
+        This is the last response with content or with a choice update
+        (``ParsedResponse.choice_update``), so it includes empty-text deltas and
+        the terminal ``finish_reason`` chunk but excludes trailing usage-only and
+        ``[DONE]`` chunks. It is never earlier than the last content response.
+        ``None`` when no response carried content or a choice update.
+        """
+        for response in reversed(self.responses):
+            if response.data or response.choice_update:
+                return response.perf_ns
+        return None
 
     @property
     def has_error(self) -> bool:

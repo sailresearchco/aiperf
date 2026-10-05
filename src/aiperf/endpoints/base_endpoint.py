@@ -439,6 +439,24 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         return extract_inputs(payload, self.PART_TYPES)
 
     @staticmethod
+    def has_choice_update(json_obj: dict[str, Any], update_key: str) -> bool:
+        """Return True when the first choice carries an update or a finish reason.
+
+        ``update_key`` names the per-chunk update field (``delta`` for chat
+        chunks, ``text`` for completions). The update counts even when it holds
+        no visible text: a server streams such chunks for generated tokens that
+        decode to ``""`` and for the terminal ``finish_reason`` chunk. A chunk
+        with empty ``choices`` (usage-only) is not a choice update.
+        """
+        choices = json_obj.get("choices")
+        if not choices or not isinstance(choices, list):
+            return False
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            return False
+        return update_key in choice or bool(choice.get("finish_reason"))
+
+    @staticmethod
     def make_text_response_data(text: str | None) -> TextResponseData | None:
         """Make a TextResponseData object from a string or return None if the text is empty."""
         return TextResponseData(text=text) if text else None

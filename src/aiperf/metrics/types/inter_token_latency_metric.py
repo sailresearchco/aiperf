@@ -7,6 +7,7 @@ from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
+from aiperf.metrics.types.generation_latency_metric import GenerationLatencyMetric
 from aiperf.metrics.types.output_sequence_length_metric import (
     OutputSequenceLengthMetric,
 )
@@ -21,7 +22,20 @@ class InterTokenLatencyMetric(BaseRecordMetric[float]):
     Post Processor for calculating Inter Token Latency (ITL) metric.
 
     Formula:
-        Inter Token Latency = (Request Latency - Time to First Token) / (Output Sequence Length - First Content Chunk Tokens)
+        Inter Token Latency = (Decode Window End - Time to First Token) / (Output Sequence Length - First Content Chunk Tokens)
+
+    The decode window must end where the counted tokens end. With server-reported
+    token counts (``--use-server-token-count``) OSL includes every generated
+    token, including tokens whose streamed delta carried no text (tokens that
+    decode to ``""``, text held back by a detokenizer, tokens past EOS under
+    ``ignore_eos``), so the window ends at Generation Latency: the last streamed
+    response that advanced generation, including empty-text deltas and the
+    terminal ``finish_reason`` chunk, excluding usage-only and ``[DONE]`` chunks.
+    Ending it at the last non-empty content response instead would divide a
+    truncated window by the full token count and inflate TPS/user. Client-side
+    token counts only see streamed text, so they keep Request Latency (the last
+    content response) as the window end. The two are equal when every token
+    streams text.
 
     The decode window ``Request Latency - Time to First Token`` covers the tokens
     that arrive AFTER the first content chunk, so the divisor subtracts that chunk's
@@ -45,6 +59,7 @@ class InterTokenLatencyMetric(BaseRecordMetric[float]):
     )
     required_metrics = {
         RequestLatencyMetric.tag,
+        GenerationLatencyMetric.tag,
         TTFTMetric.tag,
         OutputSequenceLengthMetric.tag,
     }
@@ -97,6 +112,9 @@ class InterTokenLatencyMetric(BaseRecordMetric[float]):
                 decode_tokens = osl - 1  # type: ignore
 
         ttft = record_metrics.get_or_raise(TTFTMetric)
-        request_latency = record_metrics.get_or_raise(RequestLatencyMetric)
+        if record.token_counts is not None and record.token_counts.from_server_usage:
+            window_end = record_metrics.get_or_raise(GenerationLatencyMetric)
+        else:
+            window_end = record_metrics.get_or_raise(RequestLatencyMetric)
 
-        return (request_latency - ttft) / decode_tokens  # type: ignore
+        return (window_end - ttft) / decode_tokens  # type: ignore

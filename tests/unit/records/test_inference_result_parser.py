@@ -499,6 +499,20 @@ class TestServerTokenCount:
 
         assert token_counts.output == expected_output
 
+    @pytest.mark.parametrize("include_usage", [True, False])
+    async def test_from_server_usage_marks_server_counts(
+        self, setup_inference_parser, include_usage
+    ):
+        """ITL pairs server counts with the generation-end window; flag the source."""
+        responses = [
+            make_parsed_response(completion_tokens=5, include_usage=include_usage)
+        ]
+        token_counts = await setup_inference_parser._compute_server_token_counts(
+            responses
+        )
+
+        assert token_counts.from_server_usage is include_usage
+
     async def test_warning_when_no_usage_provided(
         self, server_token_parser, request_record
     ):
