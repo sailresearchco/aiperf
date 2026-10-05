@@ -99,8 +99,11 @@ class TestCompletionsEndpointParseResponse:
 
         parsed = endpoint.parse_response(mock_response)
 
-        # Empty string is falsy, should return None
-        assert parsed is None
+        # Empty text carries no content but is kept as a choice update so it
+        # can end the decode window.
+        assert parsed is not None
+        assert parsed.data is None
+        assert parsed.choice_update is True
 
     def test_parse_response_no_text_field(self, endpoint):
         """Test parsing response without text field."""
@@ -126,7 +129,36 @@ class TestCompletionsEndpointParseResponse:
 
         parsed = endpoint.parse_response(mock_response)
 
-        assert parsed is None
+        assert parsed is not None
+        assert parsed.data is None
+        assert parsed.choice_update is True
+
+    def test_parse_response_finish_reason_chunk_is_choice_update(self, endpoint):
+        mock_response = Mock(spec=InferenceServerResponse)
+        mock_response.perf_ns = 123456789
+        mock_response.get_json.return_value = {
+            "object": "text_completion",
+            "choices": [{"text": "", "finish_reason": "length"}],
+        }
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed.data is None
+        assert parsed.choice_update is True
+
+    def test_parse_response_usage_only_is_not_choice_update(self, endpoint):
+        mock_response = Mock(spec=InferenceServerResponse)
+        mock_response.perf_ns = 123456789
+        mock_response.get_json.return_value = {
+            "object": "text_completion",
+            "choices": [],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 5},
+        }
+
+        parsed = endpoint.parse_response(mock_response)
+
+        assert parsed.data is None
+        assert parsed.choice_update is False
 
     def test_parse_response_no_choices_key(self, endpoint):
         """Test parsing response without choices key."""

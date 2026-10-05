@@ -190,7 +190,7 @@ class TestChatEndpointParseResponse:
             {"object": "chat.completion", "choices": [{"message": {}}]},
             {"object": "chat.completion", "choices": [{"message": {"content": None}}]},
             {"object": "chat.completion", "choices": [{"message": {"content": ""}}]},
-            {"object": "chat.completion.chunk", "choices": [{"delta": {}}]},
+            {"object": "chat.completion.chunk", "choices": []},
         ],
     )
     def test_parse_response_returns_none(self, endpoint, json_data):
@@ -198,6 +198,62 @@ class TestChatEndpointParseResponse:
         mock_response = create_mock_response(123456789, json_data)
         parsed = endpoint.parse_response(mock_response)
         assert parsed is None
+
+    @pytest.mark.parametrize(
+        "choice",
+        [
+            {"delta": {}},
+            {"delta": {"content": ""}},
+            {"delta": {"content": None}},
+            {"delta": {}, "finish_reason": "length"},
+            {"delta": {"tool_calls": [{"function": {"arguments": ""}}]}},
+        ],
+    )
+    def test_parse_response_empty_chunk_delta_is_choice_update(self, endpoint, choice):
+        """An empty-text chunk delta is kept as a choice update without content."""
+        mock_response = create_mock_response(
+            123456789, {"object": "chat.completion.chunk", "choices": [choice]}
+        )
+        parsed = endpoint.parse_response(mock_response)
+        assert parsed is not None
+        assert parsed.data is None
+        assert parsed.choice_update is True
+        assert parsed.perf_ns == 123456789
+
+    def test_parse_response_usage_only_chunk_is_not_choice_update(self, endpoint):
+        """A usage-only chunk (empty choices) never marks a generation update."""
+        mock_response = create_mock_response(
+            123456789,
+            {
+                "object": "chat.completion.chunk",
+                "choices": [],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 5},
+            },
+        )
+        parsed = endpoint.parse_response(mock_response)
+        assert parsed is not None
+        assert parsed.data is None
+        assert parsed.choice_update is False
+
+    def test_parse_response_content_chunk_is_choice_update(self, endpoint):
+        mock_response = create_mock_response(
+            123456789,
+            {
+                "object": "chat.completion.chunk",
+                "choices": [{"delta": {"content": "x"}}],
+            },
+        )
+        parsed = endpoint.parse_response(mock_response)
+        assert parsed.data.text == "x"
+        assert parsed.choice_update is True
+
+    def test_parse_response_non_streaming_message_is_not_choice_update(self, endpoint):
+        mock_response = create_mock_response(
+            123456789,
+            {"object": "chat.completion", "choices": [{"message": {"content": "x"}}]},
+        )
+        parsed = endpoint.parse_response(mock_response)
+        assert parsed.choice_update is False
 
     def test_parse_response_streaming_multiple_chunks(self, endpoint):
         """Test parsing multiple streaming chunks."""
@@ -377,8 +433,11 @@ class TestChatEndpointParseResponse:
         assert isinstance(parsed.data, ToolCallResponseData)
         assert parsed.data.tool_call_text == "search"
 
-    def test_parse_response_tool_calls_empty_arguments_returns_none(self, endpoint):
-        """Test that tool_calls with empty arguments returns None."""
+    def test_parse_response_tool_calls_empty_arguments_has_no_content(self, endpoint):
+        """Test that tool_calls with empty arguments carry no content.
+
+        The chunk is still kept as a choice update so it can end the decode window.
+        """
         mock_response = create_mock_response(
             123456789,
             {
@@ -390,7 +449,9 @@ class TestChatEndpointParseResponse:
         )
 
         parsed = endpoint.parse_response(mock_response)
-        assert parsed is None
+        assert parsed is not None
+        assert parsed.data is None
+        assert parsed.choice_update is True
 
     def test_parse_response_reasoning_takes_priority_over_tool_calls(self, endpoint):
         """Test that reasoning takes priority over tool_calls."""

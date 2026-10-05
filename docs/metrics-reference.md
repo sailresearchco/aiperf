@@ -20,6 +20,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Time to Second Token (TTST)](#time-to-second-token-ttst)
     - [Time to First Output Token (TTFO)](#time-to-first-output-token-ttfo)
     - [Decode Duration](#decode-duration)
+    - [Generation Latency](#generation-latency)
     - [Inter Token Latency (ITL)](#inter-token-latency-itl)
     - [Inter Chunk Latency (ICL)](#inter-chunk-latency-icl)
     - [Output Token Throughput Per User](#output-token-throughput-per-user)
@@ -298,6 +299,27 @@ decode_duration_ms = decode_duration_ns / 1e6
 - Compare Decode Duration with Output Sequence Length when early stopping or a generation-length change is possible.
 - A run can have similar Decode Duration but a much higher ITL if it produces fewer output tokens.
 - Requires valid `time_to_first_token` and `request_latency` metrics.
+- Ends at the last non-empty content response. When a stream's tail produced no text (see [Generation Latency](#generation-latency)), this is shorter than the post-TTFT interval ITL uses with server token counts.
+
+---
+
+### Generation Latency
+
+**Type:** [Record Metric](#record-metrics)
+
+Measures the time from sending a request until the last streamed response that advanced generation. A generation update is a response with content, or a chunk with an update for the first choice whose text is empty: a token that decoded to `""`, text held back by an incremental detokenizer, or the terminal `finish_reason` chunk.
+
+**Formula:**
+```python
+generation_end = last response where (response.data or response.choice_update)
+generation_latency_ns = generation_end.perf_ns - request.start_perf_ns
+```
+
+**Notes:**
+- Trailing usage-only chunks (empty `choices`) and `[DONE]` are excluded.
+- Equal to Request Latency when every generated token streams text and the finish reason arrives with the last content. Later than Request Latency when the stream's tail produced no text, for example tokens generated past EOS under `ignore_eos` + `min_tokens`, which some servers do not stream at all until the final `finish_reason` chunk.
+- `choice_update` is set by the OpenAI chat (`delta`) and completions (`text`) stream parsers. Other endpoints fall back to the last content response.
+- Inter Token Latency uses it as the end of the decode window when output tokens come from server-reported usage.
 
 ---
 
@@ -309,9 +331,14 @@ Measures the average time between consecutive tokens during generation, excludin
 
 **Formula:**
 ```python
+# The decode window ends where the counted tokens end:
+#   --use-server-token-count: generation_latency (last generation update)
+#   client-side token counts: request_latency (last content response)
+decode_window_end_ns = generation_latency_ns if server_token_counts else request_latency_ns
+
 # Default (all runs): assume one token in the first chunk.
 # Calculate in nanoseconds, then convert to seconds
-inter_token_latency_ns = (request_latency_ns - time_to_first_token_ns) / (output_sequence_length - 1)
+inter_token_latency_ns = (decode_window_end_ns - time_to_first_token_ns) / (output_sequence_length - 1)
 
 # Convert to seconds for throughput calculations
 inter_token_latency_seconds = inter_token_latency_ns / 1e9
@@ -321,6 +348,7 @@ inter_token_latency_ms = inter_token_latency_ns / 1e6
 ```
 
 **Notes:**
+- **Decode window end.** Server-reported `completion_tokens` counts every generated token, including tokens whose streamed delta carried no text. Ending the window at the last non-empty content response would divide a truncated window by the full count and inflate Output Token Throughput Per User. With `--use-server-token-count` the window therefore ends at [Generation Latency](#generation-latency), which includes empty-text deltas and the terminal `finish_reason` chunk but not usage-only or `[DONE]` chunks. Client-side token counts only see streamed text, so they keep Request Latency. Both are equal when every token streams text.
 - By default the divisor is `output_sequence_length - 1`, which is exact for servers that stream one token per chunk. This is the formula every run uses unless `--per-chunk-usage` is enabled.
 - **Opt-in first-chunk correction (`--per-chunk-usage`).** The decode window (`request_latency - time_to_first_token`) covers only the tokens that arrive *after* the first content chunk. When a server bundles several tokens into the first streamed chunk (for example TRT-LLM's `stream-interval`), assuming a single token over-counts the decode tokens and inflates Output Token Throughput Per User (`1 / ITL`). Passing `--per-chunk-usage` (which also requires `--use-server-token-count`, a `chat` endpoint, and `--streaming`) makes the server report cumulative per-chunk usage via `stream_options.continuous_usage_stats`; the divisor then becomes `output_sequence_length - tokens_in_first_content_chunk`, where that count is the server-reported cumulative `completion_tokens` (reasoning included, matching OSL which is `output + reasoning = completion`) through the first content chunk. Requires a server that honors `continuous_usage_stats` (e.g. vLLM, TRT-LLM); otherwise the divisor stays `output_sequence_length - 1`.
 - Requires an output sequence length of at least 2, plus valid `time_to_first_token`, `request_latency`, and `output_sequence_length` metrics. If the first-chunk count is inconsistent with OSL (>= OSL), the divisor degrades to `output_sequence_length - 1` and a one-time warning is logged rather than dropping the metric.

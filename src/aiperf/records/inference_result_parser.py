@@ -532,6 +532,7 @@ class InferenceResultParser(CommunicationMixin):
             reasoning=reasoning_token_count,
             output=output_token_count,
             first_content_chunk_tokens=first_chunk_tokens,
+            from_server_usage=usage is not None,
         )
 
         # Warn if server provided no usage information
