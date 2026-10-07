@@ -1813,3 +1813,19 @@ class TestDisjointInputAccounting:
             }
         )
         assert usage.prompt_tokens == 32
+
+
+@pytest.mark.parametrize(
+    "usage,expected",
+    [
+        param({"reasoning_tokens": 133}, 133, id="sglang-top-level"),
+        param({"reasoning_tokens": 0}, 0, id="explicit-zero"),
+        param({"reasoning_tokens": None}, None, id="missing-count"),
+        param({"reasoning_tokens": 133, "completion_tokens_details": {"reasoning_tokens": 10}},
+              10, id="nested-precedence"),
+        param({"reasoning_tokens": 133, "completion_tokens_details": {"reasoning_tokens": 0}},
+              0, id="nested-zero-precedence"),
+    ],
+)  # fmt: skip
+def test_sglang_reasoning_usage_field(usage: dict, expected: int | None) -> None:
+    assert Usage(usage).reasoning_tokens == expected

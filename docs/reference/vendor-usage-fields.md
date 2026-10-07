@@ -20,7 +20,7 @@ The verification work behind this document was performed by inspecting each prov
 |---|---|---|---|---|
 | OpenAI | flat `usage` | `prompt_tokens`, `completion_tokens`, `total_tokens` | `prompt_tokens_details.cached_tokens` (read-only) | nested `*_tokens_details` for audio / reasoning / prediction |
 | vLLM | flat `usage` | OpenAI-shape | `prompt_tokens_details.cached_tokens` (opt-in) | OpenAI-shape; `cached_tokens` emitted only with `--enable-prompt-tokens-details` (default off), else `prompt_tokens_details: null` |
-| SGLang | flat `usage` | OpenAI-shape | `prompt_tokens_details.cached_tokens` (opt-in) | OpenAI-compatible; `cached_tokens` emitted only with `--enable-cache-report` (default off) |
+| SGLang | flat `usage` | OpenAI-shape | `prompt_tokens_details.cached_tokens` (opt-in) | Top-level `reasoning_tokens`; `cached_tokens` emitted only with `--enable-cache-report` (default off) |
 | TRT-LLM | flat `usage` | OpenAI-shape | `prompt_tokens_details.cached_tokens` | OpenAI-compatible; `cached_tokens` emitted by default (no flag) |
 | Anthropic | flat `usage` | `input_tokens`, `output_tokens` | `cache_creation_input_tokens`, `cache_read_input_tokens` | `cache_creation` TTL sub-object; `service_tier`; `server_tool_use` |
 | Google Gemini | `usageMetadata` envelope (camelCase) | `promptTokenCount`, `candidatesTokenCount`, `totalTokenCount` | `cachedContentTokenCount` (read-only) | `thoughtsTokenCount`, `toolUsePromptTokenCount`, modality `*Details[]` arrays |
@@ -103,6 +103,8 @@ vLLM is OpenAI-compatible. Its `prompt_tokens_details` is narrower than OpenAI's
 **Verified against:** `sglang` / `python/sglang/srt/entrypoints/openai/serving_chat.py` → `usage_processor.py` (`v0.5.12.post1`).
 
 SGLang is OpenAI-compatible and surfaces cache reads as `prompt_tokens_details.cached_tokens` — but **only when the server is launched with `--enable-cache-report`** (`server_args.enable_cache_report`, default off, per [sgl-project/sglang#1599](https://github.com/sgl-project/sglang/pull/1599) — kept opt-in "to limit the impact to current users"). Without the flag the field is absent and AIPerf's cache-read metrics are all-None. SGLang also exposes a prefix-cache hit rate as a scraped Prometheus gauge (`sglang:cache_hit_rate`), but that gauge is *instantaneous* — its windowed average badly understates steady-state reuse, so prefer the usage-derived `cached_tokens` for cache reporting.
+
+SGLang reports reasoning usage as top-level `usage.reasoning_tokens`. AIPerf accepts this field in addition to OpenAI-style `completion_tokens_details.reasoning_tokens`; nested counts take precedence when both are present. Missing counts remain unknown and explicit zero counts remain zero.
 
 ### TRT-LLM
 

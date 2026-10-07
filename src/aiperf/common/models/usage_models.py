@@ -122,6 +122,7 @@ class Usage(dict):
         "cacheWriteInputTokens",  # AWS Bedrock
     ]
     REASONING_TOP_LEVEL_KEYS: ClassVar[list[str]] = [
+        "reasoning_tokens",  # SGLang
         "thoughtsTokenCount",  # Gemini
     ]
     TOOL_USE_PROMPT_KEYS: ClassVar[list[str]] = [
@@ -272,7 +273,7 @@ class Usage(dict):
         OpenAI/vLLM/DeepSeek nest these under
         completion_tokens_details.reasoning_tokens (or
         output_tokens_details.reasoning_tokens). Gemini surfaces them at the
-        top level as thoughtsTokenCount.
+        top level as thoughtsTokenCount. SGLang uses top-level reasoning_tokens.
         """
         nested = self._first_in_details(
             self.COMPLETION_DETAILS_KEYS, "reasoning_tokens"
