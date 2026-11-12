@@ -289,6 +289,11 @@ class SystemController(SignalHandlerMixin, BaseService):
                 stop_event=self._stop_requested_event,
             )
 
+        async with self.try_operation_or_stop("Start Services"):
+            await self.service_manager.wait_for_all_services_start(
+                stop_event=self._stop_requested_event,
+            )
+
         self.info("AIPerf System is CONFIGURING")
         await self._profile_configure_all_services()
         self.info("AIPerf System is CONFIGURED")

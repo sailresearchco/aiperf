@@ -72,6 +72,7 @@ class TestSystemController:
 
         assert mock_service_manager.start.called
         assert mock_service_manager.wait_for_all_services_registration.called
+        mock_service_manager.wait_for_all_services_start.assert_awaited_once()
         assert system_controller._start_profiling_all_services.called
         assert system_controller._profile_configure_all_services.called
 

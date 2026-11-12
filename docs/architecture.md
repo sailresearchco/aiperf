@@ -45,6 +45,12 @@ The System Controller is the central orchestrator that manages the lifecycle and
 - Monitoring the overall progress and health of the benchmarking process
 - Managing error handling, cleanup, and graceful termination of all modules
 
+Before dataset configuration, the controller waits for every spawned service
+identity to register and reach `RUNNING`. The startup barrier includes workers
+and record processors spawned by a manager's startup hooks, and every replica
+must join. Registration alone is insufficient: a manager can register before
+spawning its children, which would otherwise miss the configuration broadcast.
+
 ### Dataset Manager
 
 The Dataset Manager handles all aspects of input data management during benchmarking runs.

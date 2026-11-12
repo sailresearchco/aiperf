@@ -8,7 +8,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aiperf.common.enums import LifecycleState, ServiceRegistrationStatus
 from aiperf.common.exceptions import AIPerfError
+from aiperf.common.models import ServiceRunInfo
 from aiperf.controller.multiprocess_service_manager import (
     MultiProcessRunInfo,
     MultiProcessServiceManager,
@@ -325,6 +327,85 @@ class TestMultiProcessServiceManager:
         await service_manager.wait_for_all_services_registration(
             stop_event=stop_event, timeout_seconds=5.0
         )
+
+    @pytest.mark.asyncio
+    async def test_start_wait_includes_late_children_and_every_replica(
+        self, service_manager: MultiProcessServiceManager, mock_alive_process: MagicMock
+    ) -> None:
+        parent = MultiProcessRunInfo.model_construct(
+            process=mock_alive_process,
+            service_type=ServiceType.WORKER_MANAGER,
+            service_id="manager",
+        )
+        service_manager.multi_process_info = [parent]
+        service_manager.service_id_map[parent.service_id] = ServiceRunInfo(
+            service_type=parent.service_type,
+            service_id=parent.service_id,
+            registration_status=ServiceRegistrationStatus.REGISTERED,
+            state=LifecycleState.STARTING,
+        )
+        wait = asyncio.create_task(
+            service_manager.wait_for_all_services_start(asyncio.Event(), 1.0)
+        )
+        await asyncio.sleep(0)
+        assert not wait.done()
+
+        children = [
+            MultiProcessRunInfo.model_construct(
+                process=mock_alive_process,
+                service_type=service_type,
+                service_id=service_id,
+            )
+            for service_type, service_id in (
+                (ServiceType.WORKER, "worker1"),
+                (ServiceType.WORKER, "worker2"),
+                (ServiceType.RECORD_PROCESSOR, "processor"),
+            )
+        ]
+        service_manager.multi_process_info.extend(children)
+        service_manager.service_id_map[parent.service_id].state = LifecycleState.RUNNING
+        for child in children[:-1]:
+            service_manager.service_id_map[child.service_id] = ServiceRunInfo(
+                service_type=child.service_type,
+                service_id=child.service_id,
+                registration_status=ServiceRegistrationStatus.REGISTERED,
+                state=LifecycleState.RUNNING,
+            )
+        await asyncio.sleep(0)
+        assert not wait.done()
+
+        processor = children[-1]
+        service_manager.service_id_map[processor.service_id] = ServiceRunInfo(
+            service_type=processor.service_type,
+            service_id=processor.service_id,
+            registration_status=ServiceRegistrationStatus.REGISTERED,
+            state=LifecycleState.RUNNING,
+        )
+        service_manager.service_id_map["worker2"].state = LifecycleState.STARTING
+        await asyncio.sleep(0)
+        assert not wait.done()
+        service_manager.service_id_map["worker2"].state = LifecycleState.RUNNING
+        await wait
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "service_type", [ServiceType.WORKER, ServiceType.RECORD_PROCESSOR]
+    )
+    async def test_start_wait_rejects_dead_required_child(
+        self,
+        service_manager: MultiProcessServiceManager,
+        mock_dead_process: MagicMock,
+        service_type: ServiceType,
+    ) -> None:
+        service_manager.multi_process_info = [
+            MultiProcessRunInfo.model_construct(
+                process=mock_dead_process,
+                service_type=service_type,
+                service_id="dead_child",
+            )
+        ]
+        with pytest.raises(AIPerfError, match="Required service dead_child died"):
+            await service_manager.wait_for_all_services_start(asyncio.Event(), 1.0)
 
 
 class TestWaitForProcess:

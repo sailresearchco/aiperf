@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.constants import IS_WINDOWS
-from aiperf.common.enums import ServiceRegistrationStatus
+from aiperf.common.enums import LifecycleState, ServiceRegistrationStatus
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError
 from aiperf.common.types import ServiceTypeT
@@ -28,6 +28,7 @@ if IS_WINDOWS:
 else:
     from multiprocessing.context import ForkProcess
 from aiperf.controller.base_service_manager import BaseServiceManager
+from aiperf.plugin.enums import ServiceType
 
 
 class MultiProcessRunInfo(BaseModel):
@@ -99,8 +100,9 @@ class MultiProcessServiceManager(BaseServiceManager):
             process.start()
 
             self.debug(
-                lambda pid=process.pid,
-                type=service_type: f"Service {type} started as process (pid: {pid})"
+                lambda pid=process.pid, type=service_type: (
+                    f"Service {type} started as process (pid: {pid})"
+                )
             )
 
             self.multi_process_info.append(
@@ -244,7 +246,10 @@ class MultiProcessServiceManager(BaseServiceManager):
             if not is_dead:
                 continue
             exit_code = info.process.exitcode if info.process else None
-            if info.service_type in self.required_services:
+            if info.service_type in self.required_services or info.service_type in (
+                ServiceType.WORKER,
+                ServiceType.RECORD_PROCESSOR,
+            ):
                 raise AIPerfError(
                     f"Required service {info.service_id} died before "
                     f"registering (exit code {exit_code})"
@@ -294,9 +299,34 @@ class MultiProcessServiceManager(BaseServiceManager):
         stop_event: asyncio.Event,
         timeout_seconds: float = Environment.SERVICE.START_TIMEOUT,
     ) -> None:
-        """Wait for all required services to be started."""
-        raise NotImplementedError(
-            "MultiprocessServiceManager.wait_for_all_services_start is not wired up. "
-            "Multiprocess services self-report START via heartbeats; if a future caller "
-            "needs an explicit barrier here, implement it rather than calling this stub."
-        )
+        """Wait for every spawned service, including children spawned during startup."""
+
+        async def wait_for_start() -> None:
+            while not stop_event.is_set():
+                self._reap_dead_processes_during_registration(set())
+                # WorkerManager registers before its startup hook spawns workers
+                # and record processors. Re-read identities until every parent's
+                # startup has finished; a type-only snapshot misses late children
+                # and additional replicas of an already registered type.
+                if all(
+                    (registered := self.service_id_map.get(info.service_id)) is not None
+                    and registered.registration_status
+                    == ServiceRegistrationStatus.REGISTERED
+                    and registered.state == LifecycleState.RUNNING
+                    for info in self.multi_process_info
+                ):
+                    return
+                await asyncio.sleep(0.05)
+
+        try:
+            await asyncio.wait_for(wait_for_start(), timeout=timeout_seconds)
+        except TimeoutError as e:
+            pending = [
+                info.service_id
+                for info in self.multi_process_info
+                if (registered := self.service_id_map.get(info.service_id)) is None
+                or registered.state != LifecycleState.RUNNING
+            ]
+            raise AIPerfError(
+                f"Services failed to start within timeout: {pending}"
+            ) from e
